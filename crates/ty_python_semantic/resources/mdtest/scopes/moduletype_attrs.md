@@ -11,7 +11,7 @@ reveal_type(__name__)  # revealed: str
 # Typeshed says this is str | None, but for a pure-Python on-disk module its always str
 reveal_type(__file__)  # revealed: str
 reveal_type(__loader__)  # revealed: LoaderProtocol | None
-reveal_type(__package__)  # revealed: str | None
+reveal_type(__package__)  # revealed: str
 reveal_type(__doc__)  # revealed: str | None
 reveal_type(__spec__)  # revealed: ModuleSpec | None
 reveal_type(__path__)  # revealed: MutableSequence[str]
@@ -102,6 +102,7 @@ reveal_type(typing.__init__)  # revealed: bound method ModuleType.__init__(name:
 # For a stub module, we don't know that `__file__` is a string (at runtime it may be entirely
 # unset, but we follow typeshed here):
 reveal_type(typing.__file__)  # revealed: str | None
+reveal_type(typing.__package__)  # revealed: str | None
 
 # These come from `builtins.object`, not `types.ModuleType`:
 reveal_type(typing.__eq__)  # revealed: bound method ModuleType.__eq__(value: object, /) -> bool

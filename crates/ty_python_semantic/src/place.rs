@@ -1591,9 +1591,10 @@ mod implicit_globals {
     /// Looks up the type of an "implicit global symbol". Returns [`Place::Undefined`] if
     /// `name` is not present as an implicit symbol in module-global namespaces.
     ///
-    /// Implicit global symbols are symbols such as `__doc__`, `__name__`, and `__file__`
-    /// that are implicitly defined in every module's global scope. Because their type is
-    /// always the same, we simply look these up as instance attributes on `types.ModuleType`.
+    /// Implicit global symbols are symbols such as `__doc__`, `__name__`, `__file__`
+    /// and `__package__` that are implicitly defined in every module's global scope.
+    /// Because their type is always the same, we simply look these up as instance
+    /// attributes on `types.ModuleType`.
     ///
     /// Note that this function should only be used as a fallback if a symbol is being looked
     /// up in the global scope **from within the same file**. If the symbol is being looked up
@@ -1607,10 +1608,10 @@ mod implicit_globals {
         name: &str,
     ) -> PlaceAndQualifiers<'db> {
         match name {
-            // We special-case `__file__` here because we know that for an internal implicit global
-            // lookup in a Python module, it is always a string, even though typeshed says `str |
-            // None`.
-            "__file__" => Place::bound(KnownClass::Str.to_instance(db)).into(),
+            // We special-case `__file__` and `__package__` here because we know that for an
+            // internal implicit global lookup in a Python module, it is always a string,
+            // even though typeshed says `str | None`.
+            "__file__" | "__package__" => Place::bound(KnownClass::Str.to_instance(db)).into(),
 
             "__builtins__" => Place::bound(Type::any()).into(),
 
