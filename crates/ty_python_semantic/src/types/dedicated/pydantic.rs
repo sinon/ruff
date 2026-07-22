@@ -962,6 +962,10 @@ fn lax_alias<'db>(db: &'db dyn Db, name: &str) -> Type<'db> {
 enum ModelInitBehavior {
     BaseModel,
     CustomVariadic,
+    /// The effective inherited constructor is `pydantic_settings.BaseSettings.__init__`, which
+    /// accepts a fixed set of leading-underscore "control" keyword arguments (e.g. `_env_file`,
+    /// `_secrets_dir`) in addition to the model's fields, but forbids arbitrary extra keywords.
+    BaseSettings,
     Other,
 }
 
@@ -976,10 +980,13 @@ fn model_init_behavior(db: &dyn Db, class: StaticClassLiteral<'_>) -> ModelInitB
             return ModelInitBehavior::BaseModel;
         }
 
-        // These constructors use variadic keywords for specialized inputs, not arbitrary extras.
-        if base.is_known(db, KnownClass::PydanticRootModel)
-            || base.is_known(db, KnownClass::PydanticBaseSettings)
-        {
+        if base.is_known(db, KnownClass::PydanticBaseSettings) {
+            return ModelInitBehavior::BaseSettings;
+        }
+
+        // A root model's constructor uses variadic keywords for specialized inputs, not arbitrary
+        // extras.
+        if base.is_known(db, KnownClass::PydanticRootModel) {
             return ModelInitBehavior::Other;
         }
 
@@ -1023,6 +1030,73 @@ pub(in crate::types) fn model_init_discards_extra(
     metadata: ModelMetadata<'_>,
 ) -> bool {
     metadata.discards_extra(db) && model_init_behavior(db, class) == ModelInitBehavior::BaseModel
+}
+
+/// Return the leading-underscore "control" parameters that `class`'s synthesized `__init__` should
+/// accept in addition to its fields.
+///
+/// These parameters (e.g. `_env_file`, `_secrets_dir`) are only present when the effective
+/// inherited constructor is `pydantic_settings.BaseSettings.__init__`; otherwise the slice is
+/// empty.
+pub(in crate::types) fn settings_control_parameters<'db>(
+    db: &'db dyn Db,
+    class: StaticClassLiteral<'db>,
+) -> &'db [Parameter<'db>] {
+    if model_init_behavior(db, class) == ModelInitBehavior::BaseSettings {
+        base_settings_control_parameters(db)
+    } else {
+        &[]
+    }
+}
+
+/// Extract the leading-underscore control parameters from the real
+/// `pydantic_settings.BaseSettings.__init__` signature.
+///
+/// The result is identical for every settings subclass, so it is computed once and cached. Reading
+/// the third-party `__init__` here (rather than inline in per-class constructor synthesis) confines
+/// the resulting cross-module dependency to this single query.
+#[salsa::tracked(returns(deref), heap_size=ruff_memory_usage::heap_size)]
+fn base_settings_control_parameters(db: &dyn Db) -> Box<[Parameter<'_>]> {
+    let Some(base_settings) = KnownClass::PydanticBaseSettings.try_to_class_literal(db) else {
+        return Box::default();
+    };
+
+    let init = class_member(db, base_settings.body_scope(db), "__init__");
+    let Some(init) = init
+        .ignore_possibly_undefined()
+        .and_then(Type::as_function_literal)
+    else {
+        return Box::default();
+    };
+
+    // `BaseSettings.__init__` is currently a plain (non-overloaded) `def`, so its callable
+    // signature holds a single concrete signature. Iterate across every visible signature anyway
+    // (deduping by name below) so a future overloaded upstream constructor can't silently drop
+    // controls that appear only in a later overload.
+    let mut seen = FxHashSet::default();
+    init.signature(db)
+        .iter()
+        .flat_map(|signature| signature.parameters().iter())
+        // Control parameters use a single leading underscore (`_env_file`); the implicit receiver
+        // `__pydantic_self__` uses two, and the trailing `**values` collects the model's fields.
+        .filter(|parameter| {
+            !parameter.is_keyword_variadic()
+                && parameter
+                    .name()
+                    .is_some_and(|name| name.starts_with('_') && !name.starts_with("__"))
+        })
+        // Defensively drop any duplicate names so the synthesized signature can't contain two
+        // parameters with the same name.
+        .filter(|parameter| {
+            parameter
+                .name()
+                .is_some_and(|name| seen.insert(name.clone()))
+        })
+        // Cloning preserves the positional-or-keyword kind, declared type, and default, so
+        // positional control arguments (e.g. `Settings(True)`) and per-argument type checking keep
+        // working.
+        .cloned()
+        .collect()
 }
 
 /// Report keyword arguments that the Pydantic model constructor silently discards.

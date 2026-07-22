@@ -1081,6 +1081,71 @@ Settings(host=None)  # error: [invalid-argument-type]
 Settings(host="localhost", port=8000, something_else=7)  # error: [unknown-argument]
 ```
 
+## `BaseSettings` control keyword arguments
+
+`BaseSettings.__init__` accepts a fixed set of leading-underscore "control" keyword arguments (such
+as `_env_file` or `_secrets_dir`) in addition to the model's fields. These are commonly used in
+tests to override configuration that would otherwise come from `model_config`:
+
+```py
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    host: str
+    port: int
+
+# Control arguments are accepted alongside the fields.
+Settings(_secrets_dir="./secrets")
+Settings(_env_file=".env", _case_sensitive=True)
+Settings(host="localhost", _env_nested_delimiter="__")
+
+# They can also be passed positionally, matching the runtime signature (this binds `_case_sensitive`).
+Settings(True)
+
+# Control arguments are still type-checked.
+Settings(_case_sensitive=1)  # error: [invalid-argument-type]
+
+# An unknown leading-underscore keyword is not a control argument and is still rejected.
+Settings(_not_a_control_kwarg=1)  # error: [unknown-argument]
+```
+
+When a field is aliased to a control-argument name, the control argument takes precedence (matching
+the runtime, where the explicit constructor parameter consumes the value). The field here is typed
+`int`, but `_env_file` is bound by the control parameter, so it accepts a dotenv path and rejects an
+`int`:
+
+```py
+from pydantic_settings import BaseSettings
+from pydantic import Field
+
+class AliasedSettings(BaseSettings):
+    env_file: int = Field(alias="_env_file")
+
+# No duplicate-parameter error; `_env_file` binds the control argument (not the `int` field).
+AliasedSettings(_env_file=".env")
+
+# Rejected against the control parameter's type, proving the control wins over the `int` field.
+AliasedSettings(_env_file=1)  # error: [invalid-argument-type]
+```
+
+When a class nearer in the MRO defines its own `__init__` (without variadic keywords), that
+constructor is the effective one, so the `BaseSettings` control arguments are not synthesized:
+
+```py
+from pydantic_settings import BaseSettings
+
+class CustomInit(BaseSettings):
+    def __init__(self, value: int) -> None: ...
+
+class DerivedSettings(CustomInit):
+    host: str
+
+DerivedSettings(1)
+
+# `CustomInit.__init__` overrides the constructor, so `_secrets_dir` is not accepted.
+DerivedSettings(_secrets_dir="./secrets")  # error: [unknown-argument]
+```
+
 ## Root models
 
 Unlike fields on ordinary Pydantic models, a root model's `root` field can be passed either

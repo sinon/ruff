@@ -1577,6 +1577,25 @@ impl<'db> StaticClassLiteral<'db> {
                 }
             }
 
+            // A `BaseSettings` subclass also accepts a fixed set of leading-underscore control
+            // keyword arguments (e.g. `_env_file`, `_secrets_dir`) derived from the real
+            // `BaseSettings.__init__`. These are consumed by that explicit constructor rather than
+            // by a field or `**values`, so a field/alias parameter of the same name is dropped in
+            // favor of the control parameter.
+            if name == "__init__" && field_policy.is_pydantic() {
+                let control_parameters = pydantic::settings_control_parameters(db, self);
+                if !control_parameters.is_empty() {
+                    parameters.retain(|parameter| {
+                        parameter.name().is_none_or(|field_name| {
+                            !control_parameters
+                                .iter()
+                                .any(|control| control.name() == Some(field_name))
+                        })
+                    });
+                    parameters.extend(control_parameters.iter().cloned());
+                }
+            }
+
             // In the event that we have a mix of keyword-only and positional parameters, we need to sort them
             // so that the keyword-only parameters appear after positional parameters.
             parameters.sort_by_key(Parameter::is_keyword_only);
